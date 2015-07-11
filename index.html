@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="style.css">
+<title>HB9UF auxiliary microcontroller with CTCSS/PL tone DDS</title>
+</head>
+
+<body>
+<h1>Introduction</h1>
+
+Our homebrew repeaters consist of two commercial filters, a duplexer, a power
+supply and a homebrew controller. The controller itself consists of two PCBs
+which plug into a backplane. One PCB is the logic board. It decides when to key
+up the transmitter, when to issue automatic repeater IDs and many more things
+that are within the realm of the controller logic. The second PCB is the audio
+board. Among other things, it is responsible for filtering the audio from the
+receiver before it is sent back to the transmitter, summing up this audio with
+the CW tone, controlling an mp3 module for the automatic voice ID and
+synthesizing the PL/CTCSS tone which is also added to the audio sent to the
+transmitter.
+
+In order to perform these tasks, an auxiliary PIC16F722A 
+[<a href="http://ww1.microchip.com/downloads/en/DeviceDoc/41417B.pdf">datasheet</a>] 
+microcontroller is used. This chip is strapped to the I2C bus, available at the
+backplane, to receive commands from the logic PCB. In particular, the following
+features are implemented:
+
+<ol>
+    <li>Synthesizing a PL tone by means of a DDS.
+    <li>Setting output pins HIGH momentarily. The pins will fall back
+    to LOW after a fixed hold time.
+    <li>Setting output pins to a HIGH or LOW state.
+</ol>
+
+The first feature is arguably the most interesting aspect of this solution. The
+second feature is used to control the 
+<a href="http://www.elv.de/mp3-sound-modul-msm-2-komplettbausatz.html">ELV MSM 2</a>
+mp3 module and the third feature is used to mute audio paths by grounding them
+through a MOSFET. It is possible to use the software published on this site for
+the DDS only, ignoring or disabling the remaining features.
+
+We are powering the microcontroller from a 5&nbsp;V rail, although operation on
+a 3.3&nbsp;V level is equally possible. Naturally this will result in a lower
+DDS output level. The 7-bit I2C address is set to <code>0x39</code>, but can be
+easily changed in the code. While the internal 16&nbsp;MHz oscillator can be
+used, we added an external 16&nbsp;MHz crystal oscillator to mitigate drift
+originating from temperature changes which are quite significant at some
+repeater sites. If you want to use the internal oscillator instead, you have
+to change <code>#pragma config FOSC</code> in the <code>config_bits.h</code>
+file.
+
+<h1>DDS Implementation</h1>
+The working principle of a DDS is explained in quite some detail in 
+<a href="https://www.youtube.com/watch?v=PUAF5o6x_rw">this video</a>. Instead of
+an R2R ladder, a PWM output is used in the solution described here. The
+following figure illustrates this concept.
+
+<img class="center" src="dds.png">
+
+The top plot shows the sinewave that is to be synthesized. The little red dots
+are the sampling points; they correspond to the period of the square wave in the
+second plot. The duty cycle of the square wave is altered such that the average
+over a period equals the sampled value, i.e. the red dot in the top plot. The
+averaging is performed by a reconstruction filter which is discussed 
+<a href="#reconstructionfilter">below</a>.
+
+<h1>DDS Specifications</h1>
+
+The following table summarizes the characteristics of our DDS:
+
+<table>
+    <tr><td>DDS clock</td><td>15625 Hz</td></tr>
+    <tr><td>PWM resolution</td><td>10 bits</td></tr>
+    <tr><td>LUT size</td><td>256 bytes</td></tr>
+    <tr><td>LUT width</td><td>8 bits</td></tr>
+    <tr><td>Frequency resolution</td><td>approx. 238.4 mHz</td></tr>
+    <tr><td>Worst. absolute CTCSS frequency error</td><td>0.118 Hz (at 114.8 Hz)</td></tr>
+    <tr><td>Worst. relative CTCSS frequency error</td><td>0.142 % (at 71.9 Hz)</td></tr>
+</table>
+
+Last but not least, modifying the source code to support additional frequencies
+is trivial: The phase increment can be computed by dividing the desired output
+frequency by the DDS frequency resolution. The frequency resolution in Hz is
+<math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>f</mi><mi>&#916;</mi></msub><mo>=</mo><mfrac><mrow><mn>15625</mn><mo>&#160;</mo><mtext>Hz</mtext></mrow><msup><mn>2</mn><mn>16</mn></msup></mfrac></math>; the phase increment is therefore 
+<math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>&#966;</mi><mtext>increment</mtext></msub><mo>=</mo><mfrac><msub><mi>f</mi><mtext>desired</mtext></msub><msub><mi>f</mi><mi>&#916;</mi></msub></mfrac></math>.
+
+
+
+
+
+<h1><a name="reconstructionfilter">Reconstruction Filter</a></h1>
+A passive RC filter is used in our design to integrate the square wave into a
+sine wave. Some more considerations with respect to the filtering of DDS and PWM
+signals can be found in <a href="https://www.youtube.com/watch?v=7wffZniGbew">this video</a>.
+
+Our filter is shown below, although it must be said that there might be better
+approaches to this than what is depicted. Then again, this solution fully
+satisfies our needs.
+
+<img class="center" src="filter.png">
+
+As this is not a split-supply design, <code>V_half</code> is the half-rail
+voltage generated by another OpAmp. <code>R220</code> can be used to further
+increase the gain of the inverting amplifier that follows the filter. We
+designed this in just in case, but populated the footprint with a 0&nbsp;Ohm
+jumper. Using an inverting amplifier here allows for the option of negative
+gain. The purpose of <code>R230</code> is just to improve the cross-over
+distortion behaviour of the good old <code>LM324</code> and can be omitted
+if a better OpAmp is used.
+
+In addition to averaging out the pulses, it is this filter's job to reject
+unwanted nyquist images. Those images will appears close to the sampling
+frequency of 15625&nbsp;Hz, hence the requirements on the filter in this regard
+are fairly low. If necessary, the passive filter could be optimized such that
+the later stages impose less loading on the early stages. Probably the number of
+stages can be reduced anyway. An active filter could be used instead (e.g.  a 
+<a href="https://en.wikipedia.org/wiki/Sallen%E2%80%93Key_topology">Sallen-Key filter</a>),
+but it is generally a bad idea to introduce gain there. A second OpAmp would be
+needed as a consequence.
+
+<h1>I2C Register Map</h1>
+The following table shows all the commands that are understood by the
+<code>aux_pic</code>. The microcontroller acts as an I2C slave and expects one
+command byte after the address. Hence, the I2C transaction executed by the I2C
+master is:
+
+<ol>
+    <li>Send START condition.
+    <li>Send 7-bit address as most significant bits. The least significant bit is 0 to indictate a write operation.
+    <li>Send command byte.
+    <li>Send STOP condition.
+</ol>
+
+<table>
+    <tr><th>Command&nbsp;Byte</th><th>Description</th></tr>
+    <tr class="pink"><td><code>0b0xxxxxxx</code></td><td>Set PL tone. See the <a
+                href="#ddstable">table below</a> as well as
+            <code>pl_tone_t_enum.h</code> for a list of supported PL tones and
+    their corresponding command byte. The PWM waveform is available on pin <code>RC2</code>.</td></tr>
+    <tr class="blue"><td><code>0b10000001</code></td><td>Momentarily set pin <code>RA0</code> HIGH.</tr></td>
+    <tr class="blue"><td><code>0b10000010</code></td><td>Momentarily set pin <code>RA1</code> HIGH.</tr></td>
+    <tr class="blue"><td><code>0b10000011</code></td><td>Momentarily set pin <code>RA2</code> HIGH.</tr></td>
+    <tr class="blue"><td><code>0b10000100</code></td><td>Momentarily set pin <code>RA3</code> HIGH.</tr></td>
+    <tr class="blue"><td><code>0b10000101</code></td><td>Momentarily set pin <code>RA4</code> HIGH.</tr></td>
+    <tr class="blue"><td><code>0b10000110</code></td><td>Momentarily set pin <code>RB1</code> HIGH.</tr></td>
+    <tr class="blue"><td><code>0b10000111</code></td><td>Momentarily set pin <code>RB2</code> HIGH.</tr></td>
+    <tr class="blue"><td><code>0b10001000</code></td><td>Momentarily set pin <code>RB3</code> HIGH.</tr></td>
+    <tr class="blue"><td><code>0b10001001</code></td><td>Momentarily set pin <code>RB4</code> HIGH.</tr></td>
+    <tr class="blue"><td><code>0b10001010</code></td><td>Momentarily set pin <code>RB5</code> HIGH.</tr></td>
+    <tr class="green"><td><code>0b11000000</code></td><td>Set pin <code>RC6</code> LOW.</tr></td>
+    <tr class="green"><td><code>0b11000001</code></td><td>Set pin <code>RC6</code> HIGH.</tr></td>
+    <tr class="green"><td><code>0b11000010</code></td><td>Set pin <code>RC5</code> LOW.</tr></td>
+    <tr class="green"><td><code>0b11000011</code></td><td>Set pin <code>RC5</code> HIGH.</tr></td>
+</table>
+
+<h1><a name="ddstable">Output Frequencies, Errors and I2C Commands</a></h1>
+
+The following table shows the pre-programmed output frequencies along with their
+I2C command bytes, the macros defined in <code>pl_tone_t_enum.h</code> as well
+as the actual output frequencies along with errors. These are calculated figures
+of the DDS alone. Errors from the reference clock are not accounted for.
+
+<table>
+    <tr><th>Macro</th>
+        <th>Command Byte</th>
+        <th>Desired Frequency</th>
+        <th>Actual Frequency</th>
+        <th>Absolute Error</th>
+        <th>Relative Error</th>
+    </tr>
+    <tr><td>PL_NONE</td><td>0b00000000</td><td><i>off</i></td><td><i>off</i></td><td>-</td><td>-</td></tr>
+    <tr><td>PL_0670</td><td>0b00000001</td><td>67.0 Hz</td><td>66.996 Hz</td><td>0.004 Hz</td><td>0.007%</td></tr>
+    <tr><td>PL_0719</td><td>0b00000010</td><td>71.9 Hz</td><td>72.002 Hz</td><td>-0.102 Hz</td><td>-0.142%</td></tr>
+    <tr><td>PL_0744</td><td>0b00000011</td><td>74.4 Hz</td><td>74.387 Hz</td><td>0.013 Hz</td><td>0.018%</td></tr>
+    <tr><td>PL_0770</td><td>0b00000100</td><td>77.0 Hz</td><td>77.009 Hz</td><td>-0.009 Hz</td><td>-0.012%</td></tr>
+    <tr><td>PL_0797</td><td>0b00000101</td><td>79.7 Hz</td><td>79.632 Hz</td><td>0.068 Hz</td><td>0.086%</td></tr>
+    <tr><td>PL_0825</td><td>0b00000110</td><td>82.5 Hz</td><td>82.493 Hz</td><td>0.007 Hz</td><td>0.009%</td></tr>
+    <tr><td>PL_0854</td><td>0b00000111</td><td>85.4 Hz</td><td>85.354 Hz</td><td>0.046 Hz</td><td>0.054%</td></tr>
+    <tr><td>PL_0885</td><td>0b00001000</td><td>88.5 Hz</td><td>88.453 Hz</td><td>0.047 Hz</td><td>0.053%</td></tr>
+    <tr><td>PL_0915</td><td>0b00001001</td><td>91.5 Hz</td><td>91.553 Hz</td><td>-0.053 Hz</td><td>-0.058%</td></tr>
+    <tr><td>PL_0948</td><td>0b00001010</td><td>94.8 Hz</td><td>94.891 Hz</td><td>-0.091 Hz</td><td>-0.096%</td></tr>
+    <tr><td>PL_0974</td><td>0b00001011</td><td>97.4 Hz</td><td>97.513 Hz</td><td>-0.113 Hz</td><td>-0.116%</td></tr>
+    <tr><td>PL_1000</td><td>0b00001100</td><td>100.0 Hz</td><td>99.897 Hz</td><td>0.103 Hz</td><td>0.103%</td></tr>
+    <tr><td>PL_1035</td><td>0b00001101</td><td>103.5 Hz</td><td>103.474 Hz</td><td>0.026 Hz</td><td>0.025%</td></tr>
+    <tr><td>PL_1072</td><td>0b00001110</td><td>107.2 Hz</td><td>107.288 Hz</td><td>-0.088 Hz</td><td>-0.082%</td></tr>
+    <tr><td>PL_1109</td><td>0b00001111</td><td>110.9 Hz</td><td>110.865 Hz</td><td>0.035 Hz</td><td>0.032%</td></tr>
+    <tr><td>PL_1148</td><td>0b00010000</td><td>114.8 Hz</td><td>114.918 Hz</td><td>-0.118 Hz</td><td>-0.103%</td></tr>
+    <tr><td>PL_1188</td><td>0b00010001</td><td>118.8 Hz</td><td>118.732 Hz</td><td>0.068 Hz</td><td>0.057%</td></tr>
+    <tr><td>PL_1230</td><td>0b00010010</td><td>123.0 Hz</td><td>123.024 Hz</td><td>-0.024 Hz</td><td>-0.020%</td></tr>
+    <tr><td>PL_1273</td><td>0b00010011</td><td>127.3 Hz</td><td>127.316 Hz</td><td>-0.016 Hz</td><td>-0.012%</td></tr>
+    <tr><td>PL_1318</td><td>0b00010100</td><td>131.8 Hz</td><td>131.845 Hz</td><td>-0.045 Hz</td><td>-0.035%</td></tr>
+    <tr><td>PL_1365</td><td>0b00010101</td><td>136.5 Hz</td><td>136.614 Hz</td><td>-0.114 Hz</td><td>-0.083%</td></tr>
+    <tr><td>PL_1413</td><td>0b00010110</td><td>141.3 Hz</td><td>141.382 Hz</td><td>-0.082 Hz</td><td>-0.058%</td></tr>
+    <tr><td>PL_1462</td><td>0b00010111</td><td>146.2 Hz</td><td>146.151 Hz</td><td>0.049 Hz</td><td>0.034%</td></tr>
+    <tr><td>PL_1514</td><td>0b00011000</td><td>151.4 Hz</td><td>151.396 Hz</td><td>0.004 Hz</td><td>0.003%</td></tr>
+    <tr><td>PL_1567</td><td>0b00011001</td><td>156.7 Hz</td><td>156.641 Hz</td><td>0.059 Hz</td><td>0.038%</td></tr>
+    <tr><td>PL_1622</td><td>0b00011010</td><td>162.2 Hz</td><td>162.125 Hz</td><td>0.075 Hz</td><td>0.046%</td></tr>
+    <tr><td>PL_1679</td><td>0b00011011</td><td>167.9 Hz</td><td>167.847 Hz</td><td>0.053 Hz</td><td>0.032%</td></tr>
+    <tr><td>PL_1738</td><td>0b00011100</td><td>173.8 Hz</td><td>173.807 Hz</td><td>-0.007 Hz</td><td>-0.004%</td></tr>
+    <tr><td>PL_1799</td><td>0b00011101</td><td>179.9 Hz</td><td>180.006 Hz</td><td>-0.106 Hz</td><td>-0.059%</td></tr>
+    <tr><td>PL_1862</td><td>0b00011110</td><td>186.2 Hz</td><td>186.205 Hz</td><td>-0.005 Hz</td><td>-0.003%</td></tr>
+    <tr><td>PL_1928</td><td>0b00011111</td><td>192.8 Hz</td><td>192.881 Hz</td><td>-0.081 Hz</td><td>-0.042%</td></tr>
+    <tr><td>PL_2035</td><td>0b00100000</td><td>203.5 Hz</td><td>203.609 Hz</td><td>-0.109 Hz</td><td>-0.054%</td></tr>
+    <tr><td>PL_2065</td><td>0b00100001</td><td>206.5 Hz</td><td>206.470 Hz</td><td>0.030 Hz</td><td>0.014%</td></tr>
+    <tr><td>PL_2107</td><td>0b00100010</td><td>210.7 Hz</td><td>210.762 Hz</td><td>-0.062 Hz</td><td>-0.029%</td></tr>
+    <tr><td>PL_2181</td><td>0b00100011</td><td>218.1 Hz</td><td>218.153 Hz</td><td>-0.053 Hz</td><td>-0.024%</td></tr>
+    <tr><td>PL_2257</td><td>0b00100100</td><td>225.7 Hz</td><td>225.782 Hz</td><td>-0.082 Hz</td><td>-0.037%</td></tr>
+    <tr><td>PL_2336</td><td>0b00100101</td><td>233.6 Hz</td><td>233.650 Hz</td><td>-0.050 Hz</td><td>-0.021%</td></tr>
+    <tr><td>PL_2418</td><td>0b00100110</td><td>241.8 Hz</td><td>241.756 Hz</td><td>0.044 Hz</td><td>0.018%</td></tr>
+    <tr><td>PL_2503</td><td>0b00100111</td><td>250.3 Hz</td><td>250.340 Hz</td><td>-0.040 Hz</td><td>-0.016%</td></tr>
+</table>
+
+<h1>License, Code and Build Environment</h1>
+The project ist released on a <a href="https://github.com/HB9UF/aux_pic.X">github page</a> under the 
+<a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html">GNU GPL 2</a> license. The code is written in C
+using <a href="http://www.microchip.com/pagehandler/en-us/family/mplabx/">MPLAB X</a> (version 3.05) and builds with
+the <a href="http://www.microchip.com/pagehandler/en_us/devtools/mplabxc/">MPLAB XC8</a> compiler.
+
+
+</body>
+</html>
