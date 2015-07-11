@@ -1,0 +1,87 @@
+#include "increment_helper.h"
+
+uint16_t get_increment(pl_tone_t byte)
+{
+    switch(byte)
+    {
+        case PL_0670:
+            return 281;
+        case PL_0719:
+            return 302;
+        case PL_0744:
+            return 312;
+        case PL_0770:
+            return 323;
+        case PL_0797:
+            return 334;
+        case PL_0825:
+            return 346;
+        case PL_0854:
+            return 358;
+        case PL_0885:
+            return 371;
+        case PL_0915:
+            return 384;
+        case PL_0948:
+            return 398;
+        case PL_0974:
+            return 409;
+        case PL_1000:
+            return 419;
+        case PL_1035:
+            return 434;
+        case PL_1072:
+            return 450;
+        case PL_1109:
+            return 465;
+        case PL_1148:
+            return 482;
+        case PL_1188:
+            return 498;
+        case PL_1230:
+            return 516;
+        case PL_1273:
+            return 534;
+        case PL_1318:
+            return 553;
+        case PL_1365:
+            return 573;
+        case PL_1413:
+            return 593;
+        case PL_1462:
+            return 613;
+        case PL_1514:
+            return 635;
+        case PL_1567:
+            return 657;
+        case PL_1622:
+            return 680;
+        case PL_1679:
+            return 704;
+        case PL_1738:
+            return 729;
+        case PL_1799:
+            return 755;
+        case PL_1862:
+            return 781;
+        case PL_1928:
+            return 809;
+        case PL_2035:
+            return 854;
+        case PL_2065:
+            return 866;
+        case PL_2107:
+            return 884;
+        case PL_2181:
+            return 915;
+        case PL_2257:
+            return 947;
+        case PL_2336:
+            return 980;
+        case PL_2418:
+            return 1014;
+        case PL_2503:
+            return 1050;
+    }
+    return 0;
+}
