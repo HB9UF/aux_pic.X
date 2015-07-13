@@ -1,6 +1,7 @@
 #define _XTAL_FREQ 16000000
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <xc.h>
 #include "config_bits.h"
 #include "increment_helper.h"
@@ -35,6 +36,10 @@ const uint8_t lut[LUT_LEN] =
 
 volatile uint32_t increment = 0;
 volatile uint16_t mp3_pin_counter = 0;
+// ISR sets this to 1 when the hold time has elapsed. We then pull the
+// output pins back low.
+volatile bool pin_hold_flag = 0;
+
 
 void mute_init(void)
 {
@@ -185,7 +190,7 @@ int main(int argc, char** argv)
 
     PIR1bits.TMR2IF = 0;
     PIR1bits.SSPIF = 0;
-    
+        
     while(1)
     {
         if(PIR1bits.SSPIF)
@@ -212,6 +217,21 @@ int main(int argc, char** argv)
             SSPSTAT = 0;
             PIR1bits.SSPIF = 0;
         }
+        if(pin_hold_flag)
+        {
+            pin_hold_flag = 0;
+            PORTAbits.RA0 = 0;
+            PORTAbits.RA1 = 0;
+            PORTAbits.RA2 = 0;
+            PORTAbits.RA3 = 0;
+            PORTAbits.RA4 = 0;
+            PORTBbits.RB1 = 0;
+            PORTBbits.RB2 = 0;
+            PORTBbits.RB3 = 0;
+            PORTBbits.RB4 = 0;
+            PORTBbits.RB5 = 0;
+            
+        }
     }
 
     return (EXIT_SUCCESS);
@@ -230,11 +250,8 @@ void interrupt isr(void)
         if(mp3_pin_counter)
         {
             mp3_pin_counter--;
-        }
-        else
-        {
-            PORTAbits.RA0 = 0;
-            PORTAbits.RA1 = 0;
+            // Set the flag when we drop down to 0.
+            if(!mp3_pin_counter) pin_hold_flag = 1;
         }
         PIR1bits.TMR2IF = 0;
     }
