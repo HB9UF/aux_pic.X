@@ -172,6 +172,11 @@ void handle_mute_command(mute_t byte)
     }
 }
 
+inline is_healthy(void)
+{
+    return !SSPCONbits.WCOL && !SSPCONbits.SSPOV;
+}
+
 int main(int argc, char** argv)
 {
     // Run internal oscillator at 16 MHz (p. 91). This has no effect when
@@ -230,8 +235,8 @@ int main(int argc, char** argv)
             PORTBbits.RB3 = 0;
             PORTBbits.RB4 = 0;
             PORTBbits.RB5 = 0;
-            
         }
+        if(is_healthy()) CLRWDT();
     }
 
     return (EXIT_SUCCESS);
